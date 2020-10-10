@@ -57,15 +57,3 @@ def _squeeze_final_output(x):
     if x.size()[2] == 1:
         x = x[:, :, 0]
     return x
-
-
-def _transpose_time_to_spat(x):
-    return x.permute(0, 3, 2, 1)
-
-def tensor_size(x):
-    print(x.size())
-    return x
-
-def tensor_print(x):
-    print(x.data.cpu().numpy())
-    return x
