@@ -20,6 +20,8 @@ pip install bimodneurocnn
 Link to dataset to be added upon upcoming publication.
 
 ## Citing
+Paper currently under review.
+
 Braindecode was used to implement this package:
 >@article {HBM:HBM23730,
 >author = {Schirrmeister, Robin Tibor and Springenberg, Jost Tobias and Fiederer,
