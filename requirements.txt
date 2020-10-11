@@ -1,0 +1,9 @@
+numpy
+pandas
+scipy
+sklearn
+tensorflow
+matplotlib
+h5py
+mne
+ast
