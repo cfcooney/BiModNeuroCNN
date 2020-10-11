@@ -13,7 +13,7 @@ Work in progress - more to be added in future.
 
 3. Install latest release of BiModNeuroCNN using pip:
 ```
-pip install bimodneurocnn
+pip install BiModNeuroCNN
 ```
 
 ## Dataset
