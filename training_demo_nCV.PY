@@ -7,6 +7,7 @@ from BiModNeuroCNN.data_loader.data_loader import Loader
 from BiModNeuroCNN.data_loader.data_utils import get_class_index_tuples, combine_removed_trials
 from BiModNeuroCNN.data_loader.utils1 import subject_data_loader 
 from BiModNeuroCNN.models.bimodal_cnn import BiModalNet
+from BiModNeuroCNN.models.bimodal_cnn_pooling import BiModalNet_w_Pool
 from torch.optim.lr_scheduler import MultiStepLR, StepLR
 from braindecode.datautil.signal_target import SignalAndTarget
 from sklearn.model_selection import StratifiedKFold
@@ -62,7 +63,7 @@ fNIRSSubNet_params = dict(n_filters_time=40, filter_time_length=5, n_filters_spa
 
 
 @timer
-def train_nested_cv(data1, labels1, data2, labels2, rm1_file, rm2_file, subnet1_params,
+def train_nested_cv(data1, labels1, data2, labels2, model, rm1_file, rm2_file, subnet1_params,
 					subnet2_params, directory, hyps, params, labels_dict):
 
 
@@ -102,7 +103,7 @@ def train_nested_cv(data1, labels1, data2, labels2, rm1_file, rm2_file, subnet1_
 	                   n_chans_d2=data2_matched.shape[1],
 	                   input_time_length_d2=WINDOW_LEN)
 
-	clf = Classification("bimodal_cnn_pooling", subnet1_params, subnet2_params, hyps, params, data_params, path3, "package_test")
+	clf = Classification(model, subnet1_params, subnet2_params, hyps, params, data_params, path3, "package_test")
 
 	subj_results.y_true = np.array([])
 	trainsetlist, testsetlist, inner_fold_acc, inner_fold_loss, inner_fold_CE = ([] for i in range(5))
@@ -192,7 +193,7 @@ if __name__ == '__main__':
 
 	categories = ["actionImage"]
 
-	
+	model = BiModalNet
 
 	for subject in subjects:
 		path1 = f"{save_dir}/S{subject}"
@@ -221,6 +222,7 @@ if __name__ == '__main__':
 		        data_1, labels_1 = subject_data_loader(f_name_1)
 		        data_2, labels_2 = subject_data_loader(f_name_2)
 		       
-		        train_nested_cv(data_1, labels_1, data_2, labels_2, removed_labels_1, removed_labels_2, EEGSubNet_params,
+		        train_nested_cv(data_1, labels_1, data_2, labels_2, model, removed_labels_1, removed_labels_2, EEGSubNet_params,
 		        				fNIRSSubNet_params, directory, hyp_params, parameters, labels_dict)
+
 
