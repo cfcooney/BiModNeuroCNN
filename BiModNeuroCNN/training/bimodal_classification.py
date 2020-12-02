@@ -8,7 +8,6 @@ from braindecode.torch_ext.util import set_random_seeds, np_to_var, var_to_np
 from braindecode.datautil.signal_target import SignalAndTarget
 from braindecode.torch_ext.functions import square, safe_log
 import torch as th
-from BiModNeuroCNN.models.bimodal_cnn_pooling import BiModalNet
 from sklearn.model_selection import train_test_split
 from BiModNeuroCNN.training.training_utils import current_acc, current_loss
 from BiModNeuroCNN.data_loader.data_utils import smote_augmentation, multi_SignalAndTarget
@@ -29,8 +28,8 @@ torch.backends.cudnn.deterministic = True
 
 class Classification:
 
-    def __init__(self, modelname, subnet1_params, subnet2_params, hyp_params, parameters, data_params, model_save_path, tag):
-        self.modelname = modelname
+    def __init__(self, model, subnet1_params, subnet2_params, hyp_params, parameters, data_params, model_save_path, tag):
+        self.model = model
         self.subnet1_params = subnet1_params
         self.subnet2_params = subnet2_params
         self.model_save_path = model_save_path
@@ -45,10 +44,10 @@ class Classification:
         self.lr_step = parameters['lr_step']
         self.lr_gamma = parameters['lr_gamma']
         self.n_classes = data_params["n_classes"]
-        self.n_chans_eeg = data_params["n_chans_eeg"]
-        self.input_time_length_eeg = data_params["input_time_length_eeg"]
-        self.n_chans_fnirs = data_params["n_chans_fnirs"]
-        self.input_time_length_fnirs = data_params["input_time_length_fnirs"]
+        self.n_chans_d1 = data_params["n_chans_d1"]
+        self.input_time_length_d1= data_params["input_time_length_d1"]
+        self.n_chans_d2 = data_params["n_chans_d2"]
+        self.input_time_length_d2 = data_params["input_time_length_d2"]
         self.hyp_params = hyp_params
         self.activation = "elu"
         self.learning_rate = 0.001
@@ -73,10 +72,19 @@ class Classification:
         self.subnet1_params['structure'] = self.structure
         self.subnet2_params['structure'] = self.structure
 
-        if self.modelname == 'bimodal_cnn':
-            model = BiModalNet(n_classes=4, in_chans_1=56, input_time_1=200,
-                               SubNet_1_params=self.subnet1_params, in_chans_2=16,
-                               input_time_2=200, SubNet_2_params=self.subnet2_params,
+        if self.model.__name__ == 'BiModalNet':
+            model = self.model(n_classes=self.n_classes, in_chans_1=self.n_chans_d1, input_time_1=self.input_time_length_d1,
+                               SubNet_1_params=self.subnet1_params, in_chans_2=self.n_chans_d2,
+                               input_time_2=self.input_time_length_d2, SubNet_2_params=self.subnet2_params,
+                               linear_dims=100, drop_prob=.2, nonlin=torch.nn.functional.leaky_relu,
+                               fc1_out_features=500, fc2_out_features=500, gru_hidden_size=250, gru_n_layers=1)
+            th.nn.init.kaiming_uniform_(model.fused_linear.weight)
+            th.nn.init.constant_(model.fused_linear.bias, 0)
+
+        elif self.model.__name__ == 'BiModalNet_w_Pool':
+            model = self.model(n_classes=self.n_classes, in_chans_1=self.n_chans_d1, input_time_1=self.input_time_length_d1,
+                               SubNet_1_params=self.subnet1_params, in_chans_2=self.n_chans_d2,
+                               input_time_2=self.input_time_length_d2, SubNet_2_params=self.subnet2_params,
                                linear_dims=100, drop_prob=.2, nonlin=torch.nn.functional.leaky_relu,
                                fc1_out_features=500, fc2_out_features=500, gru_hidden_size=250, gru_n_layers=1)
             th.nn.init.kaiming_uniform_(model.fused_linear.weight)
@@ -168,13 +176,15 @@ class Classification:
 
             if 'window' in self.hyp_params.keys():
                 # when using classification window as a hyperparameter - currently data would have to be of same number of samples
-                train_set_1 = SignalAndTarget(train_set_1.X[:, :, self.window[0]:self.window[1]], train_set_1.y)
-                val_set_1 = SignalAndTarget(val_set_1.X[:, :, self.window[0]:self.window[1]], val_set_1.y)
-                train_set_2 = SignalAndTarget(train_set_2.X[:, :, self.window[0]:self.window[1]], train_set_2.y)
-                val_set_2 = SignalAndTarget(val_set_2.X[:, :, self.window[0]:self.window[1]], val_set_2.y)
+                train_set_1_w = SignalAndTarget(train_set_1.X[:, :, self.window[0]:self.window[1]], train_set_1.y)
+                val_set_1_w = SignalAndTarget(val_set_1.X[:, :, self.window[0]:self.window[1]], val_set_1.y)
+                train_set_2_w = SignalAndTarget(train_set_2.X[:, :, self.window[0]:self.window[1]], train_set_2.y)
+                val_set_2_w = SignalAndTarget(val_set_2.X[:, :, self.window[0]:self.window[1]], val_set_2.y)
+                current_val_acc, current_val_loss, _, _, _, probabilities = self.train_model(train_set_1_w, val_set_1_w, test_set_1, train_set_2_w,
+                                                                                             val_set_2_w, test_set_2, save_model)
+            else:
 
-            
-            current_val_acc, current_val_loss, _, _, _, probabilities = self.train_model(train_set_1, val_set_1, test_set_1, train_set_2,
+                current_val_acc, current_val_loss, _, _, _, probabilities = self.train_model(train_set_1, val_set_1, test_set_1, train_set_2,
                                                                                          val_set_2, test_set_2, save_model)
             val_acc.append(current_val_acc)
             val_loss.append(current_val_loss)
@@ -215,24 +225,28 @@ class Classification:
                 train_set_2_os, train_labels_2_os = smote_augmentation(train_set_2.X, train_set_2.y, 2)
                 train_set_1 = SignalAndTarget(train_set_1_os, train_labels_1_os)
                 train_set_2 = SignalAndTarget(train_set_2_os, train_labels_2_os)
-
+            print(train_set_1.X.shape)
 
             if 'window' in self.hyp_params.keys():
                 # when using classification window as a hyperparameter - currently data would have to be of same number of samples
-                self.window = literal_eval(self.window)  # extract tuple of indices
-                train_set_1 = SignalAndTarget(train_set_1.X[:,:,self.window[0]:self.window[1]], train_set_1.y)
-                val_set_1 = SignalAndTarget(val_set_1.X[:,:,self.window[0]:self.window[1]], val_set_1.y)
-                test_set_1 = SignalAndTarget(test_set_1.X[:,:,self.window[0]:self.window[1]], test_set_1.y)
-                train_set_2 = SignalAndTarget(train_set_2.X[:,:,self.window[0]:self.window[1]], train_set_2.y)
-                val_set_2 = SignalAndTarget(val_set_2.X[:,:,self.window[0]:self.window[1]], val_set_2.y)
-                test_set_2 = SignalAndTarget(test_set_2.X[:, :, self.window[0]:self.window[1]], test_set_2.y)
+                if type(self.window) == str:
+                    self.window = literal_eval(self.window)  # extract tuple of indices
+                train_set_1_w = SignalAndTarget(train_set_1.X[:,:,self.window[0]:self.window[1]], train_set_1.y)
+                val_set_1_w = SignalAndTarget(val_set_1.X[:,:,self.window[0]:self.window[1]], val_set_1.y)
+                test_set_1_w = SignalAndTarget(test_set_1.X[:,:,self.window[0]:self.window[1]], test_set_1.y)
+                train_set_2_w = SignalAndTarget(train_set_2.X[:,:,self.window[0]:self.window[1]], train_set_2.y)
+                val_set_2_w = SignalAndTarget(val_set_2.X[:,:,self.window[0]:self.window[1]], val_set_2.y)
+                test_set_2_w = SignalAndTarget(test_set_2.X[:, :, self.window[0]:self.window[1]], test_set_2.y)
 
-            if print_details:
-                print(f"Data 1 train set: {train_set_1.y.shape} | Data 1 val_set: {val_set_1.y.shape} | Data 1 test_set: {test_set_1.y.shape}")
-                print(f"Data 2 train set: {train_set_2.y.shape} | Data 2 val_set: {val_set_2.y.shape} | Data 2 test_set: {test_set_2.y.shape}")
+                _, _, test_accuracy, optimised_model, predictions, probabilities = self.train_model(train_set_1_w, val_set_1_w, test_set_1_w,
+                                                                                                    train_set_2_w, val_set_2_w, test_set_2_w, save_model)
 
-            _, _, test_accuracy, optimised_model, predictions, probabilities = self.train_model(train_set_1, val_set_1, test_set_1,
-                                                                                                train_set_2, val_set_2, test_set_2, save_model)
+                if print_details:
+                    print(f"Data 1 train set: {train_set_1.y.shape} | Data 1 val_set: {val_set_1.y.shape} | Data 1 test_set: {test_set_1.y.shape}")
+                    print(f"Data 2 train set: {train_set_2.y.shape} | Data 2 val_set: {val_set_2.y.shape} | Data 2 test_set: {test_set_2.y.shape}")
+            else:
+                _, _, test_accuracy, optimised_model, predictions, probabilities = self.train_model(train_set_1, val_set_1, test_set_1,
+                                                                                                    train_set_2, val_set_2, test_set_2, save_model)
             if epochs_save_path != None:
                 try:
                     optimised_model.epochs_df.to_excel(f"{epochs_save_path}/epochs{fold_number}.xlsx")
@@ -266,7 +280,7 @@ class Classification:
         """
         assert type(self.best_params) is list, "list of selected parameters required"
         for i in range(len(self.hyp_params)):
-            setattr(self, list(self.hyp_params.keys())[i], self.best_params[i+2])
+            setattr(self, list(self.hyp_params.keys())[i], self.best_params[i])
 
     @staticmethod
     def get_model_index(df):
